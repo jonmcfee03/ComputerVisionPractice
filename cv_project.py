@@ -5,21 +5,21 @@
 import sys
 import numpy as np
 import cv2
-
+import math
 # You will be able to use this file for lane detection algorithms on a video of lanes.
 # Please finish the TODOs to make it work
 # Try different values and combinations to optimize your lane detection results
  
 # TODO:
 # threshold using color from original image, and combine that with the houged image
-def threshold(img, edges):
+def threshold(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     # TODO:
     # define range of white color in HSV
     # change thresholding values according to your need !
     # HINT: research about how HSV works before filling in the values
-    lower_white = np.array([0, 0, 200], dtype=np.uint8)
+    lower_white = np.array([0, 0, 240], dtype=np.uint8)
     upper_white = np.array([180, 25, 255], dtype=np.uint8)
     
     # sensitivity = 15   # USE THIS TO GUIDE IF MY PARAMS DONT WORK
@@ -30,7 +30,8 @@ def threshold(img, edges):
     mask = cv2.inRange(hsv, lower_white, upper_white)
 
     # Bitwise-AND mask and original image
-    res = cv2.bitwise_and(edges, edges, mask= mask)
+    # res = cv2.bitwise_and(edges, edges, mask= mask)
+    res = cv2.bitwise_and(img, img, mask=mask)
 
     return res
 
@@ -58,7 +59,7 @@ def region_of_interest(img, vertices):
 
     """
     # add code here
-    cv2.fillPoly( img, vertices, (0,0,0))
+    cv2.fillPoly( img, np.int32([vertices]), (0,0,0))
     return img
 
 # TODO:
@@ -69,16 +70,34 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
     Returns an image with hough lines drawn.
     """
     # TODO: complete this function call
-    lines = cv2.HoughLinesP(img, rho, theta, threshold, min_line_len, max_line_gap)
+    lines = cv2.HoughLinesP(img, rho, theta, threshold, 
+                            lines=np.array([]), minLineLength=min_line_len, 
+                            maxLineGap=max_line_gap)
+    # print(lines)
+    lines_list = []
+    for line in lines:
+        for x1, y1, x2, y2 in line:
+            slope = (y2 - y1) / (x2 - x1)
+            if (math.fabs(slope) > 0.1):
+                lines_list.append(line)
     
+    if lines_list:
+        new_lines = np.array(lines_list)
+    else:
+        new_lines = np.empty((0, 4))
+    # print('new lines')
+    # print(new_lines)
+
     # import pdb; pdb.set_trace() //done
     line_img = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
 
     # rospy.loginfo(type(lines)) //done
     # rospy.loginfo(lines) //done
-    if isinstance(lines, np.ndarray):
+    # if isinstance(lines, np.ndarray):
+    if isinstance(new_lines, np.ndarray):
         # rospy.loginfo(lines) //done
-        draw_lines(line_img, lines)
+        # draw_lines(line_img, lines)
+        draw_lines(line_img, new_lines, color=[0, 0, 255])
     return line_img
 
 # This function is done BUT
@@ -99,7 +118,7 @@ def draw_lines(img, lines, color=[255, 255, 255], thickness=2):
     # This can help if we want a continous probability of lines based on distance
     color_range[color_range < THRESHOLD] = 0
     for ((x1,y1,x2,y2), col) in zip(lines, color_range):
-        cv2.line(img, (x1, y1), (x2, y2), [255, 255, 255], thickness)
+        cv2.line(img, (x1, y1), (x2, y2), color, thickness)
 
     # cv2.polylines is faster but can draw only one color. Thus, the only type of filtering is binary with the threshold
     # filtered_lines = lines[(color_range > THRESHOLD).ravel(), :]
@@ -113,14 +132,21 @@ def draw_lines(img, lines, color=[255, 255, 255], thickness=2):
 # IMPORTANT: Other functions to consider: Canny, MorphologyEx
 # NOT REQUIRED: Feel free to research if you want to use more functions https://docs.opencv.org/4.x/d7/dbd/group__imgproc.html
 def detect_lanes(image):
-   
     # Process the image with your own combinations of the previous fuunctions!
     # HINT: You can use some of the functions more than once if necessary. 
     # HINT: The order functions are used might not be the same as how they are listed above.
-    grayImg = grayscale(image)
-    gaussianBlurredImg = gaussian_blur(grayImg, 9)
-    edges = cv2.Canny(gaussianBlurredImg, 100, 150)
-    white_edges = threshold(image, edges)
+    gaussianBlurredImg = gaussian_blur(image, 5)
+    white_threshold = threshold(gaussianBlurredImg)
+    grayImg = grayscale(white_threshold)
+    # gaussianBlurredImg = gaussian_blur(grayImg, 9)
+    edges = cv2.Canny(grayImg, 100, 175)
+
+    points = np.array([[0, 0], [1920, 0], [1920, 100], [0, 100]])
+    right = np.array([[0, 0], [0, 400], [800, 0]])
+    left = np.array([[1920, 0], [1120, 0], [1920, 400]])
+    cropped1 = region_of_interest(edges, right)
+    cropped2 = region_of_interest(cropped1, left)
+    cropped3 = region_of_interest(cropped2, points)
 
     # Define parameters for the Hough transform
     rho = 1  # Distance resolution in pixels
@@ -130,7 +156,7 @@ def detect_lanes(image):
     max_line_gap = 20  # Maximum gap in pixels between connectable line segments
 
     # Call the hough_lines function
-    line_image = hough_lines(white_edges, rho, theta, hThreshold, min_line_len, max_line_gap)
+    line_image = hough_lines(cropped3, rho, theta, hThreshold, min_line_len, max_line_gap)
     
     if len(image.shape) == 2 or image.shape[2] == 1:  # if grayscale or single channel
         image_color = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
